@@ -2,3 +2,5 @@ locations.xlsx
 agents.xlsx
 hq.xlsx
 venv/
+graph_cache/
+
