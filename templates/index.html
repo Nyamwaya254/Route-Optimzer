@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Field Sales Route Planner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-2: #243044;
+      --border: #2d3a4f;
+      --text: #e8edf4;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #22c55e;
+      --error: #ef4444;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+
+    header {
+      margin-bottom: 2rem;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 0.35rem;
+      max-width: 52ch;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: var(--muted);
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    #agent-search {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      font: inherit;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #agent-search:focus {
+      border-color: var(--accent);
+    }
+
+    #agent-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      max-height: 240px;
+      overflow-y: auto;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      z-index: 20;
+      display: none;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    #agent-list.open { display: block; }
+
+    .agent-option {
+      padding: 0.65rem 1rem;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .agent-option:last-child { border-bottom: none; }
+
+    .agent-option:hover,
+    .agent-option.highlighted {
+      background: rgba(59, 130, 246, 0.15);
+    }
+
+    .agent-option .name { font-weight: 500; }
+
+    .agent-option .meta {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.1rem;
+    }
+
+    .selected-agent {
+      margin-top: 0.75rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .selected-agent strong { color: var(--text); }
+
+    .btn {
+      margin-top: 1.25rem;
+      padding: 0.75rem 1.5rem;
+      font: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .loading-panel {
+      display: none;
+      text-align: center;
+      padding: 2rem 1rem;
+    }
+
+    .loading-panel.visible { display: block; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-panel p { color: var(--muted); }
+
+    .loading-panel .hint {
+      font-size: 0.875rem;
+      margin-top: 0.35rem;
+    }
+
+    .error-banner {
+      display: none;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .error-banner.visible { display: block; }
+
+    .setup-banner {
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #bfdbfe;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .setup-banner code {
+      background: rgba(0, 0, 0, 0.25);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+
+    .results { display: none; }
+    .results.visible { display: block; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .stat {
+      background: var(--surface-2);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+
+    .stat .value {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--success);
+    }
+
+    .stat .label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .map-frame {
+      width: 100%;
+      height: 65vh;
+      min-height: 400px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .directions-card h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+
+    .directions-card p.hint {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    .directions-list {
+      list-style: none;
+      max-height: 320px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+
+    .direction-step {
+      display: flex;
+      gap: 0.85rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      align-items: flex-start;
+    }
+
+    .direction-step:last-child { border-bottom: none; }
+
+    .step-badge {
+      flex-shrink: 0;
+      min-width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.8rem;
+      color: #fff;
+    }
+
+    .step-badge.start { background: #16a34a; }
+    .step-badge.shop { background: #2563eb; }
+    .step-badge.finish { background: #dc2626; }
+
+    .step-body .title {
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
+    .step-body .subtitle {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-top: 0.15rem;
+    }
+
+    .results-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      .results-layout {
+        grid-template-columns: 1fr;
+      }
+      .directions-list {
+        max-height: 220px;
+      }
+    }
+
+    .empty-state {
+      color: var(--muted);
+      font-size: 0.9rem;
+      padding: 0.5rem 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>Field Sales Route Planner</h1>
+      <p>Select your name to generate today's optimized route. Your map is built live using cached road data — this usually takes 30–60 seconds.</p>
+    </header>
+
+    <div class="setup-banner" id="setup-banner">
+      This page must be opened through the Python server — not as a file.
+      In your project folder run <code>python app.py</code>, then open
+      <a href="{{ app_url }}" style="color:#93c5fd">{{ app_url }}</a>.
+    </div>
+
+    <div class="card">
+      <h2>Identify yourself</h2>
+      <label for="agent-search">Search or select your name</label>
+      <div class="search-wrap">
+        <input
+          type="text"
+          id="agent-search"
+          placeholder="Start typing your name..."
+          autocomplete="off"
+          role="combobox"
+          aria-expanded="false"
+          aria-controls="agent-list"
+        >
+        <div id="agent-list" role="listbox"></div>
+      </div>
+      <div class="selected-agent" id="selected-display">
+        No agent selected.
+      </div>
+      <button class="btn" id="generate-btn" disabled>Generate my route</button>
+    </div>
+
+    <div class="error-banner" id="error-banner"></div>
+
+    <div class="card loading-panel" id="loading-panel">
+      <div class="spinner"></div>
+      <p>Generating your route...</p>
+      <p class="hint">Computing distances and optimizing stops. This may take 30–60 seconds.</p>
+    </div>
+
+    <div class="results" id="results">
+      <div class="card">
+        <h2 id="results-title">Your route</h2>
+        <div class="stats" id="stats"></div>
+        <div class="results-layout">
+          <div class="directions-card">
+            <h3>Step-by-step directions</h3>
+            <p class="hint">Follow these stops in order. On the map, drive along the blue line with arrows.</p>
+            <ol class="directions-list" id="directions-list"></ol>
+          </div>
+          <iframe class="map-frame" id="map-frame" title="Route map"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const searchInput = document.getElementById("agent-search");
+    const agentList = document.getElementById("agent-list");
+    const selectedDisplay = document.getElementById("selected-display");
+    const generateBtn = document.getElementById("generate-btn");
+    const loadingPanel = document.getElementById("loading-panel");
+    const results = document.getElementById("results");
+    const errorBanner = document.getElementById("error-banner");
+    const statsEl = document.getElementById("stats");
+    const directionsList = document.getElementById("directions-list");
+    const mapFrame = document.getElementById("map-frame");
+    const resultsTitle = document.getElementById("results-title");
+    const setupBanner = document.getElementById("setup-banner");
+    const APP_URL = {{ app_url|tojson }};
+
+    let agents = [];
+    let selectedAgent = null;
+    let highlightIndex = -1;
+    let pollTimer = null;
+    let agentsLoaded = false;
+
+    function canUseApi() {
+      return window.location.protocol === "http:" || window.location.protocol === "https:";
+    }
+
+    function apiUrl(path) {
+      return `${window.location.origin}${path}`;
+    }
+
+    function hideSetupBanner() {
+      setupBanner.style.display = "none";
+    }
+
+    function showSetupBanner() {
+      setupBanner.style.display = "block";
+    }
+
+    function showError(message) {
+      errorBanner.textContent = message;
+      errorBanner.classList.add("visible");
+    }
+
+    function hideError() {
+      errorBanner.classList.remove("visible");
+    }
+
+    function filteredAgents(query) {
+      const q = query.trim().toLowerCase();
+      if (!q) return agents;
+      return agents.filter((a) => a.name.toLowerCase().includes(q));
+    }
+
+    function renderAgentList(items) {
+      agentList.innerHTML = "";
+      if (!agentsLoaded) {
+        agentList.innerHTML = '<div class="empty-state" style="padding:0.75rem 1rem">Loading agents...</div>';
+        return;
+      }
+      if (!items.length) {
+        const message = agents.length
+          ? "No matching agents."
+          : "No agents found. Check that locations.xlsx is in the project folder.";
+        agentList.innerHTML = `<div class="empty-state" style="padding:0.75rem 1rem">${message}</div>`;
+        return;
+      }
+      items.forEach((agent, idx) => {
+        const el = document.createElement("div");
+        el.className = "agent-option" + (idx === highlightIndex ? " highlighted" : "");
+        el.role = "option";
+        el.dataset.name = agent.name;
+        el.innerHTML = `
+          <div class="name">${agent.name}</div>
+          <div class="meta">${agent.sub_cluster} · ${agent.shop_count} shops</div>
+        `;
+        el.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          selectAgent(agent);
+        });
+        agentList.appendChild(el);
+      });
+    }
+
+    function openList() {
+      agentList.classList.add("open");
+      searchInput.setAttribute("aria-expanded", "true");
+    }
+
+    function closeList() {
+      agentList.classList.remove("open");
+      searchInput.setAttribute("aria-expanded", "false");
+      highlightIndex = -1;
+    }
+
+    function selectAgent(agent) {
+      selectedAgent = agent;
+      searchInput.value = agent.name;
+      selectedDisplay.innerHTML = `Selected: <strong>${agent.name}</strong> (${agent.sub_cluster})`;
+      generateBtn.disabled = false;
+      closeList();
+    }
+
+    searchInput.addEventListener("focus", () => {
+      renderAgentList(filteredAgents(searchInput.value));
+      openList();
+    });
+
+    searchInput.addEventListener("input", () => {
+      selectedAgent = null;
+      generateBtn.disabled = true;
+      selectedDisplay.textContent = "No agent selected.";
+      highlightIndex = -1;
+      renderAgentList(filteredAgents(searchInput.value));
+      openList();
+    });
+
+    searchInput.addEventListener("keydown", (e) => {
+      const items = filteredAgents(searchInput.value);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        highlightIndex = Math.min(highlightIndex + 1, items.length - 1);
+        renderAgentList(items);
+        openList();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        highlightIndex = Math.max(highlightIndex - 1, 0);
+        renderAgentList(items);
+        openList();
+      } else if (e.key === "Enter" && highlightIndex >= 0 && items[highlightIndex]) {
+        e.preventDefault();
+        selectAgent(items[highlightIndex]);
+      } else if (e.key === "Escape") {
+        closeList();
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".search-wrap")) closeList();
+    });
+
+    function renderDirections(directions) {
+      if (!directions?.length) {
+        directionsList.innerHTML = '<li class="direction-step"><div class="step-body"><div class="title">No directions available.</div></div></li>';
+        return;
+      }
+
+      directionsList.innerHTML = directions.map((step) => {
+        const badgeLabel = step.type === "start"
+          ? "S"
+          : step.type === "finish"
+            ? "H"
+            : step.stop_number;
+        return `
+          <li class="direction-step">
+            <div class="step-badge ${step.type}">${badgeLabel}</div>
+            <div class="step-body">
+              <div class="title">${step.title}</div>
+              <div class="subtitle">${step.subtitle}</div>
+            </div>
+          </li>
+        `;
+      }).join("");
+    }
+
+    function renderStats(summary) {
+      const items = [
+        { label: "Shops visited", value: summary.shops_visited },
+        { label: "Distance (km)", value: summary.total_distance_km },
+        { label: "Travel time (min)", value: summary.total_travel_minutes },
+        { label: "Est. revenue (KSh)", value: summary.estimated_revenue_ksh?.toLocaleString() },
+      ];
+      statsEl.innerHTML = items.map((s) => `
+        <div class="stat">
+          <div class="value">${s.value}</div>
+          <div class="label">${s.label}</div>
+        </div>
+      `).join("");
+    }
+
+    async function pollJob(jobId) {
+      const res = await fetch(apiUrl(`/api/routes/${jobId}`));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to check route status.");
+
+      if (data.status === "pending" || data.status === "running") {
+        pollTimer = setTimeout(() => pollJob(jobId), 2000);
+        return;
+      }
+
+      loadingPanel.classList.remove("visible");
+      generateBtn.disabled = false;
+
+      if (data.status === "failed") {
+        showError(data.error || "Route generation failed.");
+        return;
+      }
+
+      resultsTitle.textContent = `Route for ${data.agent_name}`;
+      renderStats(data.summary);
+      renderDirections(data.summary.directions);
+      mapFrame.srcdoc = data.map_html;
+      results.classList.add("visible");
+      results.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      if (!selectedAgent) return;
+      hideError();
+      results.classList.remove("visible");
+      loadingPanel.classList.add("visible");
+      generateBtn.disabled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+
+      try {
+        const res = await fetch(apiUrl("/api/routes"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_name: selectedAgent.name }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to start route generation.");
+        await pollJob(data.job_id);
+      } catch (err) {
+        loadingPanel.classList.remove("visible");
+        generateBtn.disabled = false;
+        showError(err.message);
+      }
+    });
+
+    async function loadAgents() {
+      if (!canUseApi()) {
+        showSetupBanner();
+        showError(`Open this app through the Python server at ${APP_URL} — not as a local HTML file.`);
+        agentsLoaded = true;
+        return;
+      }
+
+      try {
+        const res = await fetch(apiUrl("/api/agents"));
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(
+            `Could not reach the route server. Run python app.py and open ${APP_URL}`
+          );
+        }
+        if (!res.ok) throw new Error(data.error || "Failed to load agents.");
+        agents = data.agents || [];
+        agentsLoaded = true;
+        hideSetupBanner();
+        hideError();
+      } catch (err) {
+        agentsLoaded = true;
+        showSetupBanner();
+        showError(err.message);
+      }
+    }
+
+    loadAgents();
+  </script>
+</body>
+</html>

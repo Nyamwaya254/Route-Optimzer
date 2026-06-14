@@ -35,6 +35,7 @@ from pathlib import Path
 from datetime import time as dt_time
 from dataclasses import dataclass, field
 from typing import Optional
+import threading
 
 import numpy as np
 import pandas as pd
@@ -43,7 +44,8 @@ import osmnx as ox
 import folium
 import structlog
 
-from folium.plugins import PolyLineTextPath, FeatureGroupSubGroup
+from folium.plugins import PolyLineTextPath, FeatureGroupSubGroup, AntPath
+from branca.element import Element
 
 log = structlog.get_logger()
 
@@ -96,6 +98,18 @@ class Config:
 
 
 CFG = Config()
+
+
+@dataclass
+class RouteResult:
+    """Result of routing a single agent on demand."""
+
+    agent_name: str
+    sub_cluster: str
+    map_html: str
+    summary: dict
+    success: bool
+    error: Optional[str] = None
 
 
 # ===========================================================================
@@ -598,26 +612,84 @@ def constrained_nearest_neighbor(
 # ===========================================================================
 
 
+def _marker_icon(label: str, bg: str, *, size: int = 36) -> folium.DivIcon:
+    """Circular map pin with a short text label (START, HOME, or stop number)."""
+    font_size = 11 if len(label) > 2 else 15
+    return folium.DivIcon(
+        html=f"""
+        <div style="
+            background:{bg};
+            color:#fff;
+            border:3px solid #fff;
+            border-radius:50%;
+            width:{size}px;
+            height:{size}px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-weight:800;
+            font-size:{font_size}px;
+            font-family:system-ui,sans-serif;
+            box-shadow:0 2px 8px rgba(0,0,0,0.35);
+            line-height:1;
+        ">{label}</div>
+        """,
+        icon_size=(size, size),
+        icon_anchor=(size // 2, size // 2),
+    )
+
+
+def _build_directions(route_points: list[dict]) -> list[dict]:
+    """Plain-language step list for agents."""
+    steps: list[dict] = []
+    shop_num = 0
+    for pt in route_points:
+        stop_type = pt.get("stop_type", "shop")
+        if stop_type == "start":
+            steps.append(
+                {
+                    "step": len(steps) + 1,
+                    "type": "start",
+                    "title": "START — Company HQ",
+                    "subtitle": "Begin your day here. Head to Stop 1 next.",
+                }
+            )
+        elif stop_type == "finish":
+            steps.append(
+                {
+                    "step": len(steps) + 1,
+                    "type": "finish",
+                    "title": "FINISH — Your home",
+                    "subtitle": "Last stop. Your working day ends here.",
+                }
+            )
+        else:
+            shop_num += 1
+            prev = "START" if shop_num == 1 else f"Stop {shop_num - 1}"
+            steps.append(
+                {
+                    "step": len(steps) + 1,
+                    "type": "shop",
+                    "stop_number": shop_num,
+                    "title": f"Stop {shop_num}: {pt['label']}",
+                    "subtitle": f"Drive from {prev} following the blue line.",
+                }
+            )
+    return steps
+
+
 def plot_route(
     G: nx.MultiDiGraph,
     route_points: list[dict],
 ) -> folium.Map:
     """
-    Render an interactive Folium map for one agent's route.
+    Render an agent-friendly Folium map with numbered stops and clear direction.
 
-    Each road segment is drawn using Dijkstra's shortest path on the graph
-    so lines follow actual streets. Falls back to a straight line on any
-    segment where no path is found.
-
-    Args:
-        G:            Road network (same graph used for distance computation).
-        route_points: Ordered list of {'lat', 'lon', 'label', 'popup_html'}.
-                      First entry = HQ (green marker).
-                      Last entry  = Agent home (red marker).
-                      Middle entries = Shop stops (blue markers).
-
-    Returns:
-        folium.Map ready to be saved as HTML.
+    Visual language:
+      - Green START pin at HQ
+      - Blue numbered pins (1, 2, 3…) for shops in visit order
+      - Red HOME pin at the agent's residence
+      - Bold blue route line with animated arrows showing travel direction
     """
     coords = [(p["lat"], p["lon"]) for p in route_points]
     median = tuple(np.median(np.array(coords), axis=0))
@@ -625,24 +697,11 @@ def plot_route(
         np.argmin([np.linalg.norm(np.array(c) - np.array(median)) for c in coords])
     )
 
-    mymap = folium.Map(location=coords[center], zoom_start=CFG.map_zoom)
+    mymap = folium.Map(location=coords[center], zoom_start=CFG.map_zoom, tiles="OpenStreetMap")
+    route_color = "#2563eb"
+    n_shops = sum(1 for p in route_points if p.get("stop_type") == "shop")
 
-    palette = [
-        "#FF0000",
-        "#FF3300",
-        "#FF6600",
-        "#FF9900",
-        "#FFCC00",
-        "#FFFF00",
-        "#CCFF00",
-        "#99FF00",
-        "#66FF00",
-        "#33FF00",
-        "#00FF00",
-    ]
-    n_seg = max(len(coords) - 1, 1)
-    cmap = folium.LinearColormap(colors=palette, vmin=0, vmax=n_seg)
-
+    # Draw road-following segments with animated direction cues
     for i in range(len(coords) - 1):
         n1 = ox.distance.nearest_nodes(G, coords[i][1], coords[i][0])
         n2 = ox.distance.nearest_nodes(G, coords[i + 1][1], coords[i + 1][0])
@@ -653,48 +712,95 @@ def plot_route(
             log.warning("map_no_path_segment", segment=i)
             seg = [coords[i], coords[i + 1]]
 
-        line = folium.PolyLine(locations=seg, color=cmap(i), weight=4, opacity=0.8)
+        folium.PolyLine(
+            locations=seg,
+            color=route_color,
+            weight=7,
+            opacity=0.35,
+        ).add_to(mymap)
+        line = folium.PolyLine(locations=seg, color=route_color, weight=5, opacity=0.9)
         mymap.add_child(line)
+        AntPath(
+            locations=seg,
+            color=route_color,
+            pulse_color="#93c5fd",
+            weight=5,
+            opacity=0.95,
+            delay=600,
+        ).add_to(mymap)
         PolyLineTextPath(
             line,
-            "\u25ba",
+            "\u25b6",
             repeat=True,
-            offset=10,
-            attributes={"font-weight": "bold", "font-size": "14"},
+            offset=14,
+            attributes={
+                "fill": "#1e3a8a",
+                "font-weight": "bold",
+                "font-size": "20",
+            },
         ).add_to(mymap)
 
-    all_fg = folium.FeatureGroup(name="All Stops")
+    all_fg = folium.FeatureGroup(name="Shop stops (tap to hide)")
     mymap.add_child(all_fg)
 
-    for stop_num, (pt, coord) in enumerate(zip(route_points, coords)):
-        is_hq = stop_num == 0
-        is_home = stop_num == len(route_points) - 1
+    for pt, coord in zip(route_points, coords):
+        stop_type = pt.get("stop_type", "shop")
+        popup = folium.Popup(pt.get("popup_html", pt["label"]), max_width=320)
 
-        if is_hq:
+        if stop_type == "start":
             folium.Marker(
                 location=coord,
-                icon=folium.Icon(color="green", icon="home", prefix="fa"),
-                popup=folium.Popup(pt.get("popup_html", "HQ"), max_width=300),
+                icon=_marker_icon("START", "#16a34a", size=44),
+                popup=popup,
+                tooltip="START here — Company HQ",
             ).add_to(mymap)
-        elif is_home:
+        elif stop_type == "finish":
             folium.Marker(
                 location=coord,
-                icon=folium.Icon(color="red", icon="home", prefix="fa"),
-                popup=folium.Popup(pt.get("popup_html", "Home"), max_width=300),
+                icon=_marker_icon("HOME", "#dc2626", size=44),
+                popup=popup,
+                tooltip="FINISH here — Your home",
             ).add_to(mymap)
         else:
+            num = pt.get("stop_number", 0)
             marker = folium.Marker(
                 location=coord,
-                icon=folium.Icon(color="blue", icon="info-sign"),
-                popup=folium.Popup(pt.get("popup_html", pt["label"]), max_width=320),
+                icon=_marker_icon(str(num), "#2563eb"),
+                popup=popup,
+                tooltip=f"Stop {num}: {pt['label']}",
             )
-            fg = FeatureGroupSubGroup(all_fg, name=f"Stop {stop_num}: {pt['label']}")
+            fg = FeatureGroupSubGroup(all_fg, name=f"{num}. {pt['label']}")
             marker.add_to(fg)
             mymap.add_child(fg)
 
-    cmap.caption = "Route Progress"
-    cmap.add_to(mymap)
-    folium.LayerControl(collapsed=False).add_to(mymap)
+    instructions = f"""
+    <div style="position:fixed;top:12px;left:56px;z-index:9999;max-width:300px;
+         background:rgba(255,255,255,0.97);padding:14px 16px;border-radius:10px;
+         border:2px solid #2563eb;box-shadow:0 4px 20px rgba(0,0,0,0.18);
+         font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:#1e293b;">
+      <div style="font-weight:800;font-size:15px;margin-bottom:8px;color:#1e40af;">
+        How to follow your route
+      </div>
+      <div style="margin-bottom:4px">
+        <span style="color:#16a34a;font-weight:800;">START</span>
+        &mdash; begin at the green HQ marker
+      </div>
+      <div style="margin-bottom:4px">
+        <span style="color:#2563eb;font-weight:800;">Blue line + arrows</span>
+        &mdash; drive this path to the next stop
+      </div>
+      <div style="margin-bottom:4px">
+        <span style="color:#2563eb;font-weight:800;">1 &rarr; 2 &rarr; 3…</span>
+        &mdash; visit {n_shops} shops in number order
+      </div>
+      <div>
+        <span style="color:#dc2626;font-weight:800;">HOME</span>
+        &mdash; finish at the red marker
+      </div>
+    </div>
+    """
+    mymap.get_root().html.add_child(Element(instructions))
+    folium.LayerControl(collapsed=True).add_to(mymap)
     return mymap
 
 
@@ -787,18 +893,18 @@ def remove_outliers(
 # ===========================================================================
 
 
-def _route_agent(
+def route_agent(
     agent_name: str,
     agent_df: pd.DataFrame,
     sub_cluster: str,
     G: nx.MultiDiGraph,
     hq: dict,
     agent_homes: dict,
-    all_summaries: list,
-) -> None:
+    *,
+    save_map: bool = True,
+) -> Optional[dict]:
     """
     Run the full routing pipeline for one agent within one sub_cluster.
-    Appends one entry to all_summaries.
 
     Steps:
       1. Apply priority barrier → select top-k shops.
@@ -806,8 +912,8 @@ def _route_agent(
       3. Build point list [HQ, shops..., home].
       4. Build distance/duration matrices via Dijkstra.
       5. Run constrained nearest-neighbor routing.
-      6. Render and save Folium map.
-      7. Compute KPIs and append to all_summaries.
+      6. Render Folium map (optionally save to disk).
+      7. Return KPIs and map HTML.
     """
     # 1. Priority barrier
     selected = apply_priority_barrier(agent_df, agent_name)
@@ -815,7 +921,7 @@ def _route_agent(
         log.warning(
             "agent_skipped_too_few_shops", agent=agent_name, count=len(selected)
         )
-        return
+        return None
 
     # 2. Resolve home coordinates
     home = agent_homes.get(agent_name, hq)
@@ -864,14 +970,22 @@ def _route_agent(
 
     # 7. Build map route points
     route_points = []
-    for stop_num, idx in enumerate(route_indices):
+    shop_number = 0
+    total_shops_in_route = len([i for i in route_indices if i not in (hq_idx, home_idx)])
+    for idx in route_indices:
         if idx == hq_idx:
             route_points.append(
                 {
                     "lat": hq_pt[0],
                     "lon": hq_pt[1],
+                    "stop_type": "start",
+                    "stop_number": 0,
                     "label": "Company HQ",
-                    "popup_html": "<b>Company HQ</b><br>Start of route",
+                    "popup_html": (
+                        "<b>START — Company HQ</b><br>"
+                        "Begin your route here.<br>"
+                        "Next: drive to <b>Stop 1</b> following the blue line."
+                    ),
                 }
             )
         elif idx == home_idx:
@@ -879,37 +993,53 @@ def _route_agent(
                 {
                     "lat": home_pt[0],
                     "lon": home_pt[1],
+                    "stop_type": "finish",
+                    "stop_number": 0,
                     "label": f"{agent_name} — Home",
-                    "popup_html": f"<b>{agent_name}</b><br>End of route (residential)",
+                    "popup_html": (
+                        f"<b>FINISH — {agent_name}'s Home</b><br>"
+                        "Last stop of the day.<br>"
+                        "You have completed your route."
+                    ),
                 }
             )
         else:
+            shop_number += 1
             row = selected.loc[idx - 1]
+            prev = "START" if shop_number == 1 else f"Stop {shop_number - 1}"
             route_points.append(
                 {
                     "lat": float(row["latitude"]),
                     "lon": float(row["longitude"]),
+                    "stop_type": "shop",
+                    "stop_number": shop_number,
                     "label": row["shop_name"],
                     "popup_html": (
-                        f"<b>Stop {stop_num}: {row['shop_name']}</b><br>"
-                        f"Priority Score: <b>{row['priority_score']:.3f}</b><br>"
-                        f"Conversion Rate: {row['conversion_rate']:.0%}<br>"
-                        f"Avg Order Value: KSh {row['avg_order_value']:,}<br>"
-                        f"Days Since Last Visit: {int(row['last_visit_days'])}<br>"
-                        f"Service Time: {row['service_time_minutes']:.0f} min<br>"
-                        f"Shop Size: {row.get('shop_size', 'N/A')}"
+                        f"<b>Stop {shop_number}: {row['shop_name']}</b><br>"
+                        f"Come here after <b>{prev}</b>.<br>"
+                        f"Service time: {row['service_time_minutes']:.0f} min<br>"
+                        f"Open: {int(row['open_time_minutes']) // 60:02d}:"
+                        f"{int(row['open_time_minutes']) % 60:02d} – "
+                        f"{int(row['close_time_minutes']) // 60:02d}:"
+                        f"{int(row['close_time_minutes']) % 60:02d}<br>"
+                        f"Next: follow the blue line to "
+                        f"<b>{'HOME' if shop_number == total_shops_in_route else f'Stop {shop_number + 1}'}</b>"
                     ),
                 }
             )
 
-    # 8. Render and save map
+    directions = _build_directions(route_points)
+
+    # 8. Render map
     m = plot_route(G, route_points)
+    map_html = m.get_root().render()
     safe = "".join(
         c if (c.isalnum() or c == "_") else "_" for c in f"{agent_name}_{sub_cluster}"
     )
     map_path = os.path.join(CFG.maps_dir, f"route_{safe}.html")
-    m.save(map_path)
-    log.info("map_saved", agent=agent_name, path=map_path)
+    if save_map:
+        m.save(map_path)
+        log.info("map_saved", agent=agent_name, path=map_path)
 
     # 9. KPIs
     visited_shop_positions = [
@@ -951,21 +1081,147 @@ def _route_agent(
             }
         )
 
-    all_summaries.append(
-        {
-            "agent_name": agent_name,
-            "sub_cluster": sub_cluster,
-            "shops_selected": len(selected),
-            "shops_visited": r_summary["shops_visited"],
-            "shops_dropped_time": r_summary["shops_dropped"],
-            "shops_dropped_barrier": len(dropped_barrier),
-            "total_distance_m": r_summary["total_distance_m"],
-            "total_travel_minutes": r_summary["total_travel_minutes"],
-            "estimated_revenue_ksh": round(estimated_revenue, 2),
-            "map_file": map_path,
-            "dropped_shop_details": dropped_time + dropped_barrier,
-        }
-    )
+    return {
+        "agent_name": agent_name,
+        "sub_cluster": sub_cluster,
+        "shops_selected": len(selected),
+        "shops_visited": r_summary["shops_visited"],
+        "shops_dropped_time": r_summary["shops_dropped"],
+        "shops_dropped_barrier": len(dropped_barrier),
+        "total_distance_m": r_summary["total_distance_m"],
+        "total_travel_minutes": r_summary["total_travel_minutes"],
+        "estimated_revenue_ksh": round(estimated_revenue, 2),
+        "map_file": map_path if save_map else None,
+        "map_html": map_html,
+        "directions": directions,
+        "dropped_shop_details": dropped_time + dropped_barrier,
+    }
+
+
+class RouteService:
+    """Loads shop data once and generates per-agent routes on demand."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._df: Optional[pd.DataFrame] = None
+        self._hq: Optional[dict] = None
+        self._agent_homes: Optional[dict] = None
+        self._graph_cache: dict[str, nx.MultiDiGraph] = {}
+
+    def initialize(self) -> None:
+        with self._lock:
+            if self._df is not None:
+                return
+            df, hq, agent_homes = load_and_validate()
+            self._df = compute_priority_scores(df)
+            self._hq = hq
+            self._agent_homes = agent_homes
+            log.info(
+                "route_service_initialized", agents=self._df["agent_name"].nunique()
+            )
+
+    def list_agents(self) -> list[dict]:
+        self.initialize()
+        assert self._df is not None
+        agents = []
+        for name, group in self._df.groupby("agent_name"):
+            agents.append(
+                {
+                    "name": str(name),
+                    "sub_cluster": str(group["sub_cluster"].iloc[0]),
+                    "shop_count": int(len(group)),
+                }
+            )
+        return sorted(agents, key=lambda a: a["name"].lower())
+
+    def _get_graph(self, sub_cluster: str) -> nx.MultiDiGraph:
+        assert self._df is not None
+        assert self._hq is not None
+        assert self._agent_homes is not None
+
+        if sub_cluster in self._graph_cache:
+            return self._graph_cache[sub_cluster]
+
+        sc_group = self._df[self._df["sub_cluster"] == sub_cluster]
+        sc_clean = remove_outliers(sc_group, ["latitude", "longitude"])
+        all_latlons: list[tuple[float, float]] = list(
+            zip(sc_clean["latitude"], sc_clean["longitude"])
+        )
+        for ag in sc_clean["agent_name"].unique():
+            if ag in self._agent_homes:
+                h = self._agent_homes[ag]
+                all_latlons.append((float(h["latitude"]), float(h["longitude"])))
+
+        G = get_graph_for_points(all_latlons)
+        self._graph_cache[sub_cluster] = G
+        return G
+
+    def generate_route(self, agent_name: str, *, save_map: bool = False) -> RouteResult:
+        self.initialize()
+        assert self._df is not None
+        assert self._hq is not None
+        assert self._agent_homes is not None
+
+        agent_rows = self._df[self._df["agent_name"] == agent_name]
+        if agent_rows.empty:
+            return RouteResult(
+                agent_name=agent_name,
+                sub_cluster="",
+                map_html="",
+                summary={},
+                success=False,
+                error=f"Agent '{agent_name}' not found.",
+            )
+
+        sub_cluster = str(agent_rows["sub_cluster"].iloc[0])
+        try:
+            G = self._get_graph(sub_cluster)
+            result = route_agent(
+                agent_name=agent_name,
+                agent_df=agent_rows,
+                sub_cluster=sub_cluster,
+                G=G,
+                hq=self._hq,
+                agent_homes=self._agent_homes,
+                save_map=save_map,
+            )
+        except Exception as exc:
+            log.exception("on_demand_route_failed", agent=agent_name)
+            return RouteResult(
+                agent_name=agent_name,
+                sub_cluster=sub_cluster,
+                map_html="",
+                summary={},
+                success=False,
+                error=str(exc),
+            )
+
+        if result is None:
+            return RouteResult(
+                agent_name=agent_name,
+                sub_cluster=sub_cluster,
+                map_html="",
+                summary={},
+                success=False,
+                error="Not enough shops assigned to generate a route.",
+            )
+
+        return RouteResult(
+            agent_name=agent_name,
+            sub_cluster=sub_cluster,
+            map_html=result["map_html"],
+            summary={
+                "shops_selected": result["shops_selected"],
+                "shops_visited": result["shops_visited"],
+                "shops_dropped_time": result["shops_dropped_time"],
+                "shops_dropped_barrier": result["shops_dropped_barrier"],
+                "total_distance_km": round(result["total_distance_m"] / 1000, 2),
+                "total_travel_minutes": result["total_travel_minutes"],
+                "estimated_revenue_ksh": result["estimated_revenue_ksh"],
+                "directions": result.get("directions", []),
+            },
+            success=True,
+        )
 
 
 # ===========================================================================
@@ -1019,15 +1275,17 @@ def main() -> None:
 
             for agent_name_raw, agent_group in sc_clean.groupby("agent_name"):
                 try:
-                    _route_agent(
+                    summary = route_agent(
                         agent_name=str(agent_name_raw),
                         agent_df=agent_group,
                         sub_cluster=str(sub_cluster),
                         G=G,
                         hq=hq,
                         agent_homes=agent_homes,
-                        all_summaries=all_summaries,
+                        save_map=True,
                     )
+                    if summary:
+                        all_summaries.append(summary)
                 except Exception:
                     log.exception(
                         "agent_routing_failed",

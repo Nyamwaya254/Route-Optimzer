@@ -77,7 +77,10 @@ cached to disk automatically.
 
 ```
 project/
-├── route_optimizer.py        Main program
+├── route_optimizer.py        Main program + RouteService API
+├── app.py                    Web app (agent self-service routes)
+├── templates/
+│   └── index.html            Agent login + map UI
 ├── locations.xlsx            Shop data (required)
 ├── hq.xlsx                   Company HQ coordinates (required)
 ├── agents.xlsx               Agent residential coordinates (recommended)
@@ -185,10 +188,34 @@ from your data, redistribute its 0.15 weight across the remaining three fields.
 
 ## Running the Program
 
+### Batch mode (all agents)
+
 ```bash
 cd your_project_folder
 python route_optimizer.py
 ```
+
+### Web app (per-agent on demand)
+
+Agents open the site, search for their name, and receive a live-generated route map
+(typically 30–60 seconds using cached road graphs).
+
+```bash
+pip install flask
+python app.py
+```
+
+Then open [http://localhost:8080](http://localhost:8080) in a browser.
+
+To use a different port: `PORT=9000 python app.py`
+
+**Do not** open `templates/index.html` directly or use Live Server — the page needs
+the Flask backend to load agent names and generate routes.
+
+The first route request for a sub-cluster loads the road graph from disk cache.
+Subsequent requests for agents in the same territory are faster.
+
+---
 
 The first run downloads road network data from OpenStreetMap and saves it to
 `graph_cache/`. Subsequent runs load from disk. See the Runbook for expected
