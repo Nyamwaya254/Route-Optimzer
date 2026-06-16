@@ -45,7 +45,6 @@ import folium
 import structlog
 
 from folium.plugins import PolyLineTextPath, FeatureGroupSubGroup, AntPath
-from branca.element import Element
 
 log = structlog.get_logger()
 
@@ -699,7 +698,6 @@ def plot_route(
 
     mymap = folium.Map(location=coords[center], zoom_start=CFG.map_zoom, tiles="OpenStreetMap")
     route_color = "#2563eb"
-    n_shops = sum(1 for p in route_points if p.get("stop_type") == "shop")
 
     # Draw road-following segments with animated direction cues
     for i in range(len(coords) - 1):
@@ -773,33 +771,6 @@ def plot_route(
             marker.add_to(fg)
             mymap.add_child(fg)
 
-    instructions = f"""
-    <div style="position:fixed;top:12px;left:56px;z-index:9999;max-width:300px;
-         background:rgba(255,255,255,0.97);padding:14px 16px;border-radius:10px;
-         border:2px solid #2563eb;box-shadow:0 4px 20px rgba(0,0,0,0.18);
-         font-family:system-ui,sans-serif;font-size:13px;line-height:1.55;color:#1e293b;">
-      <div style="font-weight:800;font-size:15px;margin-bottom:8px;color:#1e40af;">
-        How to follow your route
-      </div>
-      <div style="margin-bottom:4px">
-        <span style="color:#16a34a;font-weight:800;">START</span>
-        &mdash; begin at the green HQ marker
-      </div>
-      <div style="margin-bottom:4px">
-        <span style="color:#2563eb;font-weight:800;">Blue line + arrows</span>
-        &mdash; drive this path to the next stop
-      </div>
-      <div style="margin-bottom:4px">
-        <span style="color:#2563eb;font-weight:800;">1 &rarr; 2 &rarr; 3…</span>
-        &mdash; visit {n_shops} shops in number order
-      </div>
-      <div>
-        <span style="color:#dc2626;font-weight:800;">HOME</span>
-        &mdash; finish at the red marker
-      </div>
-    </div>
-    """
-    mymap.get_root().html.add_child(Element(instructions))
     folium.LayerControl(collapsed=True).add_to(mymap)
     return mymap
 

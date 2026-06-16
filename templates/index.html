@@ -267,6 +267,38 @@
       margin-bottom: 0.35rem;
     }
 
+    .route-legend {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 0.85rem;
+      margin-bottom: 1rem;
+      font-size: 0.82rem;
+      line-height: 1.55;
+    }
+
+    .route-legend h4 {
+      font-size: 0.85rem;
+      font-weight: 700;
+      margin-bottom: 0.45rem;
+      color: var(--text);
+    }
+
+    .route-legend li {
+      margin-bottom: 0.25rem;
+      color: var(--muted);
+      list-style: none;
+    }
+
+    .route-legend .tag {
+      font-weight: 700;
+    }
+
+    .route-legend .tag.start { color: #4ade80; }
+    .route-legend .tag.route { color: #60a5fa; }
+    .route-legend .tag.stops { color: #60a5fa; }
+    .route-legend .tag.home { color: #f87171; }
+
     .directions-card p.hint {
       color: var(--muted);
       font-size: 0.85rem;
@@ -391,8 +423,17 @@
         <div class="stats" id="stats"></div>
         <div class="results-layout">
           <div class="directions-card">
+            <div class="route-legend">
+              <h4>How to follow your route</h4>
+              <ul>
+                <li><span class="tag start">START</span> — green marker at HQ</li>
+                <li><span class="tag route">Blue line + arrows</span> — drive to the next stop</li>
+                <li><span class="tag stops">1 → 2 → 3…</span> — visit <span id="legend-shop-count">all</span> shops in order</li>
+                <li><span class="tag home">HOME</span> — red marker at end of day</li>
+              </ul>
+            </div>
             <h3>Step-by-step directions</h3>
-            <p class="hint">Follow these stops in order. On the map, drive along the blue line with arrows.</p>
+            <p class="hint">Follow the list below from top to bottom.</p>
             <ol class="directions-list" id="directions-list"></ol>
           </div>
           <iframe class="map-frame" id="map-frame" title="Route map"></iframe>
@@ -411,6 +452,7 @@
     const errorBanner = document.getElementById("error-banner");
     const statsEl = document.getElementById("stats");
     const directionsList = document.getElementById("directions-list");
+    const legendShopCount = document.getElementById("legend-shop-count");
     const mapFrame = document.getElementById("map-frame");
     const resultsTitle = document.getElementById("results-title");
     const setupBanner = document.getElementById("setup-banner");
@@ -565,6 +607,9 @@
     }
 
     function renderStats(summary) {
+      if (summary.shops_visited != null) {
+        legendShopCount.textContent = summary.shops_visited;
+      }
       const items = [
         { label: "Shops visited", value: summary.shops_visited },
         { label: "Distance (km)", value: summary.total_distance_km },
